@@ -238,13 +238,110 @@ def extract_features(hole, community, pot, stack, position, n_opponents, bet_to_
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 @st.cache_resource
-def load_model():
-    if not os.path.exists("model/poker_model.pkl"):
-        return None
-    with open("model/poker_model.pkl", "rb") as f:
-        return pickle.load(f)
+def load_or_train_model():
+    """Load model from pickle if compatible, otherwise train from scratch."""
+    import numpy as _np
+    from itertools import combinations as _combinations
+    from sklearn.ensemble import GradientBoostingClassifier
+    from sklearn.model_selection import train_test_split
 
-model = load_model()
+    # Try loading pickle first
+    try:
+        if os.path.exists("model/poker_model.pkl"):
+            with open("model/poker_model.pkl", "rb") as f:
+                return pickle.load(f)
+    except Exception:
+        pass
+
+    # Train from scratch if pickle is incompatible
+    st.toast("First launch — training model (~90 sec)...", icon="⏳")
+
+    def _cr(c): return c // 4 + 2
+    def _cs(c): return c % 4
+
+    def _eval(cards):
+        ranks = sorted([_cr(c) for c in cards], reverse=True)
+        suits = [_cs(c) for c in cards]
+        rc = {}
+        for r in ranks: rc[r] = rc.get(r, 0) + 1
+        counts = sorted(rc.values(), reverse=True)
+        n = len(cards)
+        fl = len(set(suits)) == 1 and n == 5
+        st_ = n == 5 and len(set(ranks)) == 5 and max(ranks) - min(ranks) == 4
+        if set(ranks) == {14,2,3,4,5}: st_ = True
+        if st_ and fl: return 8
+        if counts[0] == 4: return 7
+        if len(counts)>1 and counts[0]==3 and counts[1]==2: return 6
+        if fl: return 5
+        if st_: return 4
+        if counts[0] == 3: return 3
+        if len(counts)>1 and counts[0]==2 and counts[1]==2: return 2
+        if counts[0] == 2: return 1
+        return 0
+
+    def _hs(hole, com):
+        ac = hole + com
+        if len(ac) < 2: return 0
+        return max(_eval(list(c)) for c in _combinations(ac, min(5, len(ac))))
+
+    def _eq(hole):
+        r1,r2 = sorted([_cr(c) for c in hole], reverse=True)
+        s = _cs(hole[0])==_cs(hole[1]); p = r1==r2
+        b = (r1+r2)/28.0
+        if p: b += 0.15+(r1-2)*0.01
+        if s: b += 0.04
+        if r1-r2<=2 and not p: b += 0.02
+        return min(b, 1.0)
+
+    def _feat(hole, com, pot, stack, pos, n_opp, street, btc):
+        hs=_hs(hole,com)/8.0; eq=_eq(hole)
+        tp=pot+btc; po=btc/tp if tp>0 else 0
+        spr=min(stack/pot,20.0) if pot>0 else 10.0
+        r1,r2=sorted([_cr(c) for c in hole],reverse=True)
+        cs_=[_cs(c) for c in com]; cr_=[_cr(c) for c in com]
+        return [hs,eq,po,spr/20.0,pos/9.0,n_opp/8.0,street/3.0,
+                min(btc/(stack+1),1.0),r1/14.0,
+                int(_cs(hole[0])==_cs(hole[1])),int(r1==r2),
+                int(r1-r2<=2 and r1!=r2),
+                int(len(cr_)!=len(set(cr_))) if cr_ else 0,
+                int(any(cs_.count(s)>=3 for s in cs_)) if len(cs_)>=3 else 0,
+                len(com)/5.0, min(stack/max(pot*10,1),1.0)]
+
+    def _label(f, noise=0.08):
+        eff=f[1] if f[14]==0 else 0.3*f[1]+0.7*f[0]
+        eff+=_np.random.normal(0,noise)
+        rt=0.58-f[4]*0.06-f[3]*0.04; ct=f[2]+0.03-f[4]*0.03
+        if f[7]==0: return 2 if eff>=rt else 1
+        if eff>=rt: return 2
+        if eff>=ct and f[7]<0.5: return 1
+        if (f[11] or f[13]) and f[4]>0.5 and _np.random.random()<0.15: return 2
+        if _np.random.random()<0.05 and f[7]<0.15: return 2
+        return 0
+
+    _np.random.seed(42)
+    rows=[]
+    for _ in range(50000):
+        deck=list(range(52)); _np.random.shuffle(deck)
+        hole=[deck[0],deck[1]]
+        street=_np.random.choice([0,1,2,3],p=[0.35,0.35,0.15,0.15])
+        com=deck[2:2+{0:0,1:3,2:4,3:5}[street]]
+        pot=_np.random.choice([10,20,40,80,150,300],p=[0.2,0.25,0.25,0.15,0.1,0.05])
+        stack=_np.random.randint(50,2000); pos=_np.random.randint(0,10)
+        n_opp=_np.random.randint(1,9)
+        btc=min(_np.random.choice([0,5,10,20,50,100],p=[0.2,0.2,0.25,0.2,0.1,0.05]),stack)
+        f=_feat(hole,com,pot,stack,pos,n_opp,street,btc)
+        rows.append(f+[_label(f)])
+
+    data=_np.array(rows); X,y=data[:,:-1],data[:,-1].astype(int)
+    Xtr,Xte,ytr,yte=train_test_split(X,y,test_size=0.2,random_state=42,stratify=y)
+    mdl=GradientBoostingClassifier(n_estimators=200,learning_rate=0.08,
+                                    max_depth=5,subsample=0.8,random_state=42)
+    mdl.fit(Xtr,ytr)
+    os.makedirs("model",exist_ok=True)
+    with open("model/poker_model.pkl","wb") as f: pickle.dump(mdl,f)
+    return mdl
+
+model = load_or_train_model()
 
 # ── Session state ─────────────────────────────────────────────────────────────
 if "hole"      not in st.session_state: st.session_state.hole      = []
