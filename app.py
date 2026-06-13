@@ -8,6 +8,8 @@ import numpy as np
 import pickle
 import os
 from itertools import combinations
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.model_selection import train_test_split
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -240,10 +242,6 @@ def extract_features(hole, community, pot, stack, position, n_opponents, bet_to_
 @st.cache_resource
 def load_or_train_model():
     """Load model from pickle if compatible, otherwise train from scratch."""
-    import numpy as _np
-    from itertools import combinations as _combinations
-    from sklearn.ensemble import GradientBoostingClassifier
-    from sklearn.model_selection import train_test_split
 
     # Try loading pickle first
     try:
@@ -282,7 +280,7 @@ def load_or_train_model():
     def _hs(hole, com):
         ac = hole + com
         if len(ac) < 2: return 0
-        return max(_eval(list(c)) for c in _combinations(ac, min(5, len(ac))))
+        return max(_eval(list(c)) for c in combinations(ac, min(5, len(ac))))
 
     def _eq(hole):
         r1,r2 = sorted([_cr(c) for c in hole], reverse=True)
@@ -309,30 +307,30 @@ def load_or_train_model():
 
     def _label(f, noise=0.08):
         eff=f[1] if f[14]==0 else 0.3*f[1]+0.7*f[0]
-        eff+=_np.random.normal(0,noise)
+        eff+=np.random.normal(0,noise)
         rt=0.58-f[4]*0.06-f[3]*0.04; ct=f[2]+0.03-f[4]*0.03
         if f[7]==0: return 2 if eff>=rt else 1
         if eff>=rt: return 2
         if eff>=ct and f[7]<0.5: return 1
-        if (f[11] or f[13]) and f[4]>0.5 and _np.random.random()<0.15: return 2
-        if _np.random.random()<0.05 and f[7]<0.15: return 2
+        if (f[11] or f[13]) and f[4]>0.5 and np.random.random()<0.15: return 2
+        if np.random.random()<0.05 and f[7]<0.15: return 2
         return 0
 
-    _np.random.seed(42)
+    np.random.seed(42)
     rows=[]
     for _ in range(50000):
-        deck=list(range(52)); _np.random.shuffle(deck)
+        deck=list(range(52)); np.random.shuffle(deck)
         hole=[deck[0],deck[1]]
-        street=_np.random.choice([0,1,2,3],p=[0.35,0.35,0.15,0.15])
+        street=np.random.choice([0,1,2,3],p=[0.35,0.35,0.15,0.15])
         com=deck[2:2+{0:0,1:3,2:4,3:5}[street]]
-        pot=_np.random.choice([10,20,40,80,150,300],p=[0.2,0.25,0.25,0.15,0.1,0.05])
-        stack=_np.random.randint(50,2000); pos=_np.random.randint(0,10)
-        n_opp=_np.random.randint(1,9)
-        btc=min(_np.random.choice([0,5,10,20,50,100],p=[0.2,0.2,0.25,0.2,0.1,0.05]),stack)
+        pot=np.random.choice([10,20,40,80,150,300],p=[0.2,0.25,0.25,0.15,0.1,0.05])
+        stack=np.random.randint(50,2000); pos=np.random.randint(0,10)
+        n_opp=np.random.randint(1,9)
+        btc=min(np.random.choice([0,5,10,20,50,100],p=[0.2,0.2,0.25,0.2,0.1,0.05]),stack)
         f=_feat(hole,com,pot,stack,pos,n_opp,street,btc)
         rows.append(f+[_label(f)])
 
-    data=_np.array(rows); X,y=data[:,:-1],data[:,-1].astype(int)
+    data=np.array(rows); X,y=data[:,:-1],data[:,-1].astype(int)
     Xtr,Xte,ytr,yte=train_test_split(X,y,test_size=0.2,random_state=42,stratify=y)
     mdl=GradientBoostingClassifier(n_estimators=200,learning_rate=0.08,
                                     max_depth=5,subsample=0.8,random_state=42)
