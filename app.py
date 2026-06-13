@@ -252,7 +252,6 @@ def load_or_train_model():
         pass
 
     # Train from scratch if pickle is incompatible
-    st.toast("First launch — training model (~90 sec)...", icon="⏳")
 
     def _cr(c): return c // 4 + 2
     def _cs(c): return c % 4
